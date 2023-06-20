@@ -7,7 +7,6 @@ use itertools::Itertools;
 use std::{
     collections::{BTreeMap, HashMap},
     io::{BufRead, BufReader},
-    iter,
     path::PathBuf,
 };
 
@@ -15,10 +14,10 @@ const COLORS: [(u8, u8, u8); 7] = [
     (255, 0, 0),
     (0, 0, 255),
     (255, 255, 0),
-    (0, 128, 0),
+    (144, 238, 144),
     (128, 0, 128),
     (255, 165, 0),
-    (0, 128, 128),
+    (255, 20, 147),
 ];
 
 #[derive(Debug, clap::Parser)]
@@ -34,7 +33,7 @@ fn parse_month(raw: &str) -> anyhow::Result<chrono::Month> {
     raw.parse().map_err(|_| anyhow!("failed to parse month"))
 }
 
-type Stats = BTreeMap<u32, Vec<(String, Vec<f32>)>>;
+type Stats = BTreeMap<u32, HashMap<String, Vec<f32>>>;
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -42,18 +41,21 @@ fn main() -> anyhow::Result<()> {
         .map(BufReader::new)
         .context("failed to open data file")?;
 
-    let stats = calculate(
+    let (stats, ordered_categories) = calculate(
         data,
         (args.year as i32, Month::number_from_month(&args.month)),
     )
     .context("failed to calculate")?;
 
-    draw(stats)?;
+    draw(stats, ordered_categories)?;
 
     Ok(())
 }
 
-fn calculate(data: impl BufRead, (year, month): (i32, u32)) -> anyhow::Result<Stats> {
+fn calculate(
+    data: impl BufRead,
+    (year, month): (i32, u32),
+) -> anyhow::Result<(Stats, Vec<String>)> {
     let mut stats = BTreeMap::<u32, HashMap<String, Vec<f32>>>::new();
 
     // TODO: move this code somewhere
@@ -107,22 +109,14 @@ fn calculate(data: impl BufRead, (year, month): (i32, u32)) -> anyhow::Result<St
         }
     }
 
-    let stats = stats
+    let ordered_categories = category_frequency
         .into_iter()
-        .map(|(day, day_stats)| {
-            let day_stats = day_stats
-                .into_iter()
-                .sorted_by_key(|(category, _values)| {
-                    let freq = category_frequency.get(category).unwrap();
-                    -(*freq as isize)
-                })
-                .collect();
+        .sorted_by_key(|(_category, freq)| *freq)
+        .map(|(category, _freq)| category)
+        .rev()
+        .collect::<Vec<String>>();
 
-            (day, day_stats)
-        })
-        .collect();
-
-    Ok(stats)
+    Ok((stats, ordered_categories))
 }
 
 fn parse_data_line(line: &str) -> anyhow::Result<(String, Vec<f32>)> {
@@ -139,17 +133,13 @@ fn parse_data_line(line: &str) -> anyhow::Result<(String, Vec<f32>)> {
     Ok((category, values))
 }
 
-fn draw(stats: Stats) -> anyhow::Result<()> {
+fn draw(mut stats: Stats, ordered_categories: Vec<String>) -> anyhow::Result<()> {
     use plotters::prelude::*;
 
-    let category_colors = stats
-        .values()
-        .map(|day_stats| day_stats.iter().map(|(category, _values)| category))
-        .flatten()
-        .unique()
-        .cloned()
+    let categories = ordered_categories
+        .into_iter()
         .zip(COLORS.iter().copied().map(|(r, g, b)| RGBColor(r, g, b)))
-        .collect::<HashMap<String, RGBColor>>();
+        .collect::<Vec<(String, RGBColor)>>();
 
     let root = BitMapBackend::new("./pic.png", (640, 480)).into_drawing_area();
 
@@ -191,45 +181,45 @@ fn draw(stats: Stats) -> anyhow::Result<()> {
 
     chart.draw_series([Rectangle::new([(0, 0.0), (stats.len() as u32, 0.0)], BLACK)])?;
 
-    let series = iter::once(Rectangle::new([(0, 0.0), (stats.len() as u32, 0.0)], BLACK))
-        .chain(
-            stats
-                .iter()
-                .map(|(day, day_stats)| {
-                    let mut blocks = vec![];
+    let mut totals = HashMap::<u32, f32>::new();
+    for (category, color) in categories {
+        let style = ShapeStyle {
+            color: color.into(),
+            filled: true,
+            stroke_width: 0,
+        };
 
-                    let block_iter = day_stats
-                        .iter()
-                        .map(|(category, values)| {
-                            values.iter().map(|value| (category.clone(), value))
-                        })
-                        .flatten();
+        let mut series = vec![];
+        for (day, day_stats) in stats.iter_mut() {
+            if let Some(values) = day_stats.remove(&category) {
+                let value = values.into_iter().sum::<f32>();
+                let total = totals.get(day).copied().unwrap_or_default();
 
-                    let mut total = 0.0;
-                    for (category, value) in block_iter {
-                        blocks.push(Rectangle::new(
-                            [(day - 1, total), (*day, total + value)],
-                            ShapeStyle {
-                                color: category_colors.get(&category).copied().unwrap().into(),
-                                filled: true,
-                                stroke_width: 0,
-                            },
-                        ));
+                series.push(Rectangle::new(
+                    [(day - 1, total), (*day, total + value)],
+                    style,
+                ));
 
-                        total += value;
-                    }
+                totals
+                    .entry(*day)
+                    .and_modify(|t| {
+                        *t += value;
+                    })
+                    .or_insert(value);
+            }
+        }
 
-                    blocks
-                })
-                .flatten(),
-        )
-        .collect::<Vec<Rectangle<_>>>();
-
-    chart.draw_series(series)?.label("this");
+        if !series.is_empty() {
+            chart
+                .draw_series(series)?
+                .legend(move |(x, y)| Circle::new((x, y), 3, style))
+                .label(category);
+        }
+    }
 
     chart
         .configure_series_labels()
-        .position(SeriesLabelPosition::UpperMiddle)
+        .position(SeriesLabelPosition::UpperRight)
         .margin(20)
         .legend_area_size(5)
         .border_style(BLUE)

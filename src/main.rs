@@ -1,8 +1,9 @@
 use anyhow::{anyhow, bail, Context};
-use chrono::{Month, NaiveDate};
+use chrono::{Datelike, Month, NaiveDate, Utc};
 use clap::Parser;
 use fs_err::File;
 use itertools::Itertools;
+use plotters::{backend::RGBPixel, coord::Shift, prelude::*};
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -41,13 +42,12 @@ fn main() -> anyhow::Result<()> {
         .map(BufReader::new)
         .context("failed to open data file")?;
 
-    let (stats, ordered_categories) = calculate(
-        data,
-        (args.year as i32, Month::number_from_month(&args.month)),
-    )
-    .context("failed to calculate")?;
+    let (year, month) = (args.year as i32, Month::number_from_month(&args.month));
 
-    draw(stats, ordered_categories)?;
+    let (stats, ordered_categories) =
+        calculate(data, (year, month)).context("failed to calculate")?;
+
+    draw((year, month), stats, ordered_categories)?;
 
     Ok(())
 }
@@ -133,19 +133,119 @@ fn parse_data_line(line: &str) -> anyhow::Result<(String, Vec<f32>)> {
     Ok((category, values))
 }
 
-fn draw(mut stats: Stats, ordered_categories: Vec<String>) -> anyhow::Result<()> {
-    use plotters::prelude::*;
-
-    let categories = ordered_categories
+fn draw(
+    (year, month): (i32, u32),
+    stats: Stats,
+    ordered_categories: Vec<String>,
+) -> anyhow::Result<()> {
+    let colored_ordered_categories = ordered_categories
         .into_iter()
         .zip(COLORS.iter().copied().map(|(r, g, b)| RGBColor(r, g, b)))
         .collect::<Vec<(String, RGBColor)>>();
 
-    let root = BitMapBackend::new("./pic.png", (640, 480)).into_drawing_area();
+    let canvas = BitMapBackend::new("./pic.png", (640, 480)).into_drawing_area();
+    canvas.fill(&WHITE)?;
 
-    root.fill(&WHITE)?;
+    let canvas = canvas.margin(10, 10, 10, 10);
 
-    let root = root.margin(10, 10, 10, 10);
+    draw_main_chart(stats.clone(), &colored_ordered_categories, &canvas)?;
+    draw_avg_chart((year, month), stats, &colored_ordered_categories, &canvas)?;
+
+    canvas.present()?;
+
+    Ok(())
+}
+
+fn draw_avg_chart(
+    (year, month): (i32, u32),
+    stats: Stats,
+    colored_ordered_categories: &[(String, RGBColor)],
+    canvas: &DrawingArea<BitMapBackend<RGBPixel>, Shift>,
+) -> anyhow::Result<()> {
+    let x_range = 0u32..1u32;
+    let y_range = {
+        let max = stats
+            .iter()
+            .map(|(_, day_stats)| {
+                day_stats
+                    .iter()
+                    .map(|(_category, values)| values.iter())
+                    .flatten()
+                    .sum::<f32>()
+            })
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or_default();
+
+        0f32..max
+    };
+
+    let mut chart = ChartBuilder::on(canvas)
+        .margin_right(520)
+        .caption("avg", ("sans-serif", 40).into_font())
+        .x_label_area_size(20)
+        .y_label_area_size(40)
+        .build_cartesian_2d(x_range, y_range)?;
+
+    chart
+        .configure_mesh()
+        // .disable_x_mesh()
+        .bold_line_style(&WHITE.mix(0.3))
+        .disable_x_axis()
+        .set_tick_mark_size(LabelAreaPosition::Bottom, 0)
+        // .y_desc("Count")
+        // .x_desc("Bucket")
+        // .axis_desc_style(("sans-serif", 15))
+        .draw()?;
+
+    chart.draw_series([Rectangle::new([(0, 0.0), (1, 0.0)], BLACK)])?;
+
+    let days = {
+        let today = Utc::now();
+
+        if (year, month) == (today.year(), today.month()) {
+            today.day()
+        } else {
+            stats.len() as u32
+        }
+    };
+
+    let mut totals = HashMap::<String, f32>::new();
+    for (_day, day_stats) in stats {
+        for (category, values) in day_stats {
+            *totals.entry(category).or_default() += values.into_iter().sum::<f32>();
+        }
+    }
+
+    let total = totals.values().sum::<f32>();
+    let avg = total / days as f32;
+
+    let mut series = vec![];
+    let mut level = 0.0;
+    for (category, color) in colored_ordered_categories {
+        if let Some(ctotal) = totals.remove(category) {
+            let adjusted_total = avg * (ctotal / total);
+            series.push(Rectangle::new(
+                [(0, level), (1, level + adjusted_total)],
+                ShapeStyle {
+                    color: (*color).into(),
+                    filled: true,
+                    stroke_width: 0,
+                },
+            ));
+            level += adjusted_total;
+        }
+    }
+
+    chart.draw_series(series)?;
+
+    Ok(())
+}
+
+fn draw_main_chart(
+    mut stats: Stats,
+    colored_ordered_categories: &[(String, RGBColor)],
+    canvas: &DrawingArea<BitMapBackend<RGBPixel>, Shift>,
+) -> anyhow::Result<()> {
     let x_range = 0u32..(stats.len() as u32);
     let y_range = {
         let max = stats
@@ -162,8 +262,10 @@ fn draw(mut stats: Stats, ordered_categories: Vec<String>) -> anyhow::Result<()>
 
         0f32..max
     };
-    let mut chart = ChartBuilder::on(&root)
-        .caption("This is our first plot", ("sans-serif", 40).into_font())
+
+    let mut chart = ChartBuilder::on(canvas)
+        .caption("main", ("sans-serif", 40).into_font())
+        .margin_left(100)
         .x_label_area_size(20)
         .y_label_area_size(40)
         .build_cartesian_2d(x_range, y_range)?;
@@ -182,16 +284,16 @@ fn draw(mut stats: Stats, ordered_categories: Vec<String>) -> anyhow::Result<()>
     chart.draw_series([Rectangle::new([(0, 0.0), (stats.len() as u32, 0.0)], BLACK)])?;
 
     let mut totals = HashMap::<u32, f32>::new();
-    for (category, color) in categories {
+    for (category, color) in colored_ordered_categories {
         let style = ShapeStyle {
-            color: color.into(),
+            color: (*color).into(),
             filled: true,
             stroke_width: 0,
         };
 
         let mut series = vec![];
         for (day, day_stats) in stats.iter_mut() {
-            if let Some(values) = day_stats.remove(&category) {
+            if let Some(values) = day_stats.remove(category) {
                 let value = values.into_iter().sum::<f32>();
                 let total = totals.get(day).copied().unwrap_or_default();
 
@@ -227,8 +329,6 @@ fn draw(mut stats: Stats, ordered_categories: Vec<String>) -> anyhow::Result<()>
         .label_font(("Calibri", 20))
         .draw()
         .unwrap();
-
-    root.present()?;
 
     Ok(())
 }

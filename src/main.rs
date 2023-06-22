@@ -147,7 +147,7 @@ fn draw(
     let l = ordered_categories.len();
     let colored_ordered_categories = ordered_categories
         .into_iter()
-        .zip(colors::colors(l, (r, g, b)))
+        .zip(colors::colors())
         .collect::<Vec<(String, RGBColor)>>();
 
     let canvas = BitMapBackend::new(&output, (640, 480)).into_drawing_area();
@@ -359,28 +359,16 @@ mod colors {
     }
 
     use plotters::style::RGBColor;
-    pub fn colors(n: usize, (r, g, b): (u8, u8, u8)) -> Vec<RGBColor> {
-        let start_hsv = rgb_to_hsv(r, g, b);
-
-        // Create a vector to store the RGB values
-        let mut color_list = Vec::new();
-
-        for i in 0..n {
-            // Calculate the new hue value
-            let new_h =
-                (start_hsv.hue.into_positive_degrees() + ((i as f32 / n as f32) * 360.0)) % 360.0;
-
-            let oscillation_factor = (i as f32 / n as f32).sin();
-            let new_s = 0.5 + (0.5 * oscillation_factor);
-            let new_v = 0.5 + (0.5 * oscillation_factor);
-
-            // Convert the HSV color back to RGB
-            let hsv_color = Hsv::from((new_h, new_s, new_v));
-            let (new_r, new_g, new_b) = hsv_to_rgb(&hsv_color);
-
-            color_list.push(RGBColor(new_r, new_g, new_b));
-        }
-
-        color_list
+    pub fn colors() -> Vec<RGBColor> {
+        vec![
+            RGBColor(255, 0, 0),
+            RGBColor(0, 200, 0),
+            RGBColor(255, 255, 0),
+            RGBColor(0, 0, 200),
+            RGBColor(128, 128, 128),
+            RGBColor(255, 150, 150),
+            RGBColor(255, 165, 0),
+            RGBColor(0, 0, 0),
+        ]
     }
 }

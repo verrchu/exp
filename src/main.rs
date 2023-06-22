@@ -11,22 +11,18 @@ use std::{
     path::PathBuf,
 };
 
-const COLORS: [(u8, u8, u8); 7] = [
-    (255, 0, 0),
-    (0, 0, 255),
-    (255, 255, 0),
-    (144, 238, 144),
-    (128, 0, 128),
-    (255, 165, 0),
-    (255, 20, 147),
-];
-
 #[derive(Debug, clap::Parser)]
 struct Args {
     #[clap(short, long, value_parser = parse_month)]
     month: chrono::Month,
     #[clap(short, long)]
     year: u16,
+    #[clap(short, default_value = "199")]
+    r: u8,
+    #[clap(short, default_value = "21")]
+    g: u8,
+    #[clap(short, default_value = "133")]
+    b: u8,
     data_file: PathBuf,
 }
 
@@ -47,7 +43,12 @@ fn main() -> anyhow::Result<()> {
     let (stats, ordered_categories) =
         calculate(data, (year, month)).context("failed to calculate")?;
 
-    draw((year, month), stats, ordered_categories)?;
+    draw(
+        (year, month),
+        stats,
+        ordered_categories,
+        (args.r, args.g, args.b),
+    )?;
 
     Ok(())
 }
@@ -137,10 +138,12 @@ fn draw(
     (year, month): (i32, u32),
     stats: Stats,
     ordered_categories: Vec<String>,
+    (r, g, b): (u8, u8, u8),
 ) -> anyhow::Result<()> {
+    let l = ordered_categories.len();
     let colored_ordered_categories = ordered_categories
         .into_iter()
-        .zip(COLORS.iter().copied().map(|(r, g, b)| RGBColor(r, g, b)))
+        .zip(colors::colors(l, (r, g, b)))
         .collect::<Vec<(String, RGBColor)>>();
 
     let canvas = BitMapBackend::new("./pic.png", (640, 480)).into_drawing_area();
@@ -331,4 +334,49 @@ fn draw_main_chart(
         .unwrap();
 
     Ok(())
+}
+
+mod colors {
+    use palette::{Hsv, IntoColor, Srgb};
+
+    fn rgb_to_hsv(r: u8, g: u8, b: u8) -> Hsv {
+        let rgb_color = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+        let hsv_color: Hsv = rgb_color.into_color();
+        hsv_color
+    }
+
+    fn hsv_to_rgb(hsv_color: &Hsv) -> (u8, u8, u8) {
+        let rgb_color: Srgb = (*hsv_color).into_color();
+        (
+            (rgb_color.red * 255.0) as u8,
+            (rgb_color.green * 255.0) as u8,
+            (rgb_color.blue * 255.0) as u8,
+        )
+    }
+
+    use plotters::style::RGBColor;
+    pub fn colors(n: usize, (r, g, b): (u8, u8, u8)) -> Vec<RGBColor> {
+        let start_hsv = rgb_to_hsv(r, g, b);
+
+        // Create a vector to store the RGB values
+        let mut color_list = Vec::new();
+
+        for i in 0..n {
+            // Calculate the new hue value
+            let new_h =
+                (start_hsv.hue.into_positive_degrees() + ((i as f32 / n as f32) * 360.0)) % 360.0;
+
+            let oscillation_factor = (i as f32 / n as f32).sin();
+            let new_s = 0.5 + (0.5 * oscillation_factor);
+            let new_v = 0.5 + (0.5 * oscillation_factor);
+
+            // Convert the HSV color back to RGB
+            let hsv_color = Hsv::from((new_h, new_s, new_v));
+            let (new_r, new_g, new_b) = hsv_to_rgb(&hsv_color);
+
+            color_list.push(RGBColor(new_r, new_g, new_b));
+        }
+
+        color_list
+    }
 }

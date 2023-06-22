@@ -8,7 +8,7 @@ use plotters::{backend::RGBPixel, coord::Shift, prelude::*};
 use std::{
     collections::{BTreeMap, HashMap},
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 #[derive(Debug, clap::Parser)]
@@ -17,6 +17,8 @@ struct Args {
     month: chrono::Month,
     #[clap(short, long)]
     year: u16,
+    #[clap(short, long)]
+    output: PathBuf,
     #[clap(short, default_value = "199")]
     r: u8,
     #[clap(short, default_value = "21")]
@@ -48,6 +50,7 @@ fn main() -> anyhow::Result<()> {
         stats,
         ordered_categories,
         (args.r, args.g, args.b),
+        &args.output,
     )?;
 
     Ok(())
@@ -139,6 +142,7 @@ fn draw(
     stats: Stats,
     ordered_categories: Vec<String>,
     (r, g, b): (u8, u8, u8),
+    output: impl AsRef<Path>,
 ) -> anyhow::Result<()> {
     let l = ordered_categories.len();
     let colored_ordered_categories = ordered_categories
@@ -146,7 +150,7 @@ fn draw(
         .zip(colors::colors(l, (r, g, b)))
         .collect::<Vec<(String, RGBColor)>>();
 
-    let canvas = BitMapBackend::new("./pic.png", (640, 480)).into_drawing_area();
+    let canvas = BitMapBackend::new(&output, (640, 480)).into_drawing_area();
     canvas.fill(&WHITE)?;
 
     let canvas = canvas.margin(10, 10, 10, 10);

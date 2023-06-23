@@ -1,3 +1,7 @@
+// NOTE: this crate is written in a very dirty manner and it is supposed to be
+// like that because it was a quick (and successful) experiment
+#![allow(warnings)]
+
 use anyhow::{anyhow, bail, Context};
 use chrono::{Datelike, Month, NaiveDate, Utc};
 use clap::Parser;

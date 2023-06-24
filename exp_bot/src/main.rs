@@ -1,3 +1,6 @@
+mod models;
+mod storage;
+
 use std::{env::var, time::Duration};
 
 use anyhow::Context;
@@ -6,19 +9,44 @@ use teloxide_core::{
     payloads::{GetUpdatesSetters, SendMessageSetters},
     requests::Requester,
     types::{
-        AllowedUpdate, CallbackQuery, ChatId, InlineKeyboardButton, InlineKeyboardButtonKind,
-        InlineKeyboardMarkup, Message, UpdateKind,
+        AllowedUpdate, CallbackQuery, Chat, ChatId, InlineKeyboardButton, InlineKeyboardButtonKind,
+        InlineKeyboardMarkup, Message, UpdateKind, User,
     },
     Bot,
 };
 use tokio::time::{interval, MissedTickBehavior};
+use tokio_postgres::{Client as PgClient, Config as PgConf, NoTls};
+
+struct ExecCtx {
+    bot: Bot,
+    db_client: PgClient,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenv::dotenv().context("failed to read env config")?;
     setup_tracing().context("failed to setup tracing")?;
 
     let token = var("TOKEN").context("failed to read token from env")?;
     let bot = Bot::new(token);
+
+    let pg_url = var("PG_URL").context("failed to read db connection info from env")?;
+    let pg_conf = pg_url
+        .parse::<PgConf>()
+        .context("failed to parse db connection info")?;
+
+    let (client, conn) = pg_conf
+        .connect(NoTls)
+        .await
+        .context("failed to establish db connection")?;
+    tokio::spawn(async {
+        conn.await.expect("connection closed");
+    });
+
+    let ctx = ExecCtx {
+        bot,
+        db_client: client,
+    };
 
     let mut interval = interval(Duration::from_millis(200));
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -27,7 +55,8 @@ async fn main() -> anyhow::Result<()> {
     loop {
         interval.tick().await;
 
-        let updates = bot
+        let updates = ctx
+            .bot
             .get_updates()
             .offset(offset)
             .limit(1)
@@ -38,11 +67,14 @@ async fn main() -> anyhow::Result<()> {
         for update in updates {
             tracing::debug!("handling update");
 
+            let Some(chat) = update.chat() else { continue; };
+            let Some(user) = update.user() else { continue; };
+
             match update.kind {
-                UpdateKind::Message(msg) => handle_message(&bot, msg)
+                UpdateKind::Message(ref msg) => handle_message((chat, user), msg, &ctx)
                     .await
                     .context("failed to handle message")?,
-                UpdateKind::CallbackQuery(cb) => handle_callback(&bot, cb)
+                UpdateKind::CallbackQuery(cb) => handle_callback(cb, &ctx)
                     .await
                     .context("failed to handle callback")?,
                 _ => unreachable!(),
@@ -55,17 +87,24 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn handle_message(bot: &Bot, msg: Message) -> anyhow::Result<()> {
-    let chat_id = msg.chat.id;
+async fn handle_message(
+    (chat, user): (&Chat, &User),
+    msg: &Message,
+    ctx: &ExecCtx,
+) -> anyhow::Result<()> {
+    storage::user::ensure_exists(models::User { id: user.id.0 }, &ctx.db_client)
+        .await
+        .context("failed to ensure that user exists")?;
 
     match msg.text() {
         Some("/report") => {
-            render_report_menu(bot, chat_id, Utc::now().year())
+            render_report_menu(&ctx.bot, chat.id, Utc::now().year())
                 .await
                 .context("failed to render report menu")?;
         }
         _ => {
-            bot.delete_message(chat_id, msg.id)
+            ctx.bot
+                .delete_message(chat.id, msg.id)
                 .await
                 .context("failed to delete message")?;
         }
@@ -74,7 +113,7 @@ async fn handle_message(bot: &Bot, msg: Message) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_callback(_bot: &Bot, _cb: CallbackQuery) -> anyhow::Result<()> {
+async fn handle_callback(_cb: CallbackQuery, cts: &ExecCtx) -> anyhow::Result<()> {
     Ok(())
 }
 

@@ -11,6 +11,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum Chart {
+    AverageByDay,
+    Regular,
+}
+
 #[derive(Debug, clap::Parser)]
 struct Args {
     #[clap(short, long, value_parser = parse_month)]
@@ -19,6 +25,8 @@ struct Args {
     year: u16,
     #[clap(short, long)]
     output: PathBuf,
+    #[clap(short, long, default_value = "regular")]
+    chart: Chart,
     data_file: PathBuf,
 }
 
@@ -39,7 +47,14 @@ fn main() -> anyhow::Result<()> {
     let (stats, ordered_categories) =
         calculate(data, (year, month)).context("failed to calculate")?;
 
-    draw((year, month), stats, ordered_categories, &args.output)?;
+    match args.chart {
+        Chart::Regular => {
+            draw_regular((year, month), stats, ordered_categories, &args.output)?;
+        }
+        Chart::AverageByDay => {
+            draw_average_by_day((year, month), stats, ordered_categories, &args.output)?;
+        }
+    }
 
     Ok(())
 }
@@ -125,7 +140,7 @@ fn parse_data_line(line: &str) -> anyhow::Result<(String, Vec<f32>)> {
     Ok((category, values))
 }
 
-fn draw(
+fn draw_regular(
     (year, month): (i32, u32),
     stats: Stats,
     ordered_categories: Vec<String>,
@@ -322,6 +337,133 @@ fn draw_main_chart(
         .label_font(("Calibri", 20))
         .draw()
         .unwrap();
+
+    Ok(())
+}
+
+fn draw_average_by_day(
+    (year, month): (i32, u32),
+    stats: Stats,
+    ordered_categories: Vec<String>,
+    output: impl AsRef<Path>,
+) -> anyhow::Result<()> {
+    let colored_ordered_categories = ordered_categories
+        .into_iter()
+        .zip(colors::colors())
+        .collect::<Vec<(String, RGBColor)>>();
+
+    let canvas = BitMapBackend::new(&output, (640, 480)).into_drawing_area();
+    canvas.fill(&WHITE)?;
+
+    let canvas = canvas.margin(10, 10, 10, 10);
+
+    let x_range = 0u32..(stats.len() as u32);
+    let y_range = {
+        let max = stats
+            .iter()
+            .map(|(_, day_stats)| {
+                day_stats
+                    .iter()
+                    .map(|(_category, values)| values.iter())
+                    .flatten()
+                    .sum::<f32>()
+            })
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or_default();
+
+        0f32..max
+    };
+
+    let mut chart = ChartBuilder::on(&canvas)
+        .caption("avg by day", ("sans-serif", 40).into_font())
+        .x_label_area_size(20)
+        .y_label_area_size(40)
+        .build_cartesian_2d(x_range, y_range)?;
+
+    chart
+        .configure_mesh()
+        .bold_line_style(&WHITE.mix(0.3))
+        .disable_x_axis()
+        .set_tick_mark_size(LabelAreaPosition::Bottom, 0)
+        .draw()?;
+
+    chart.draw_series([Rectangle::new([(0, 0.0), (stats.len() as u32, 0.0)], BLACK)])?;
+
+    let mut totals = HashMap::<String, f32>::new();
+    let mut avg_by_day = BTreeMap::<u32, HashMap<String, f32>>::new();
+    for (day, day_stats) in stats.iter() {
+        for (category, values) in day_stats {
+            *totals.entry(category.clone()).or_default() += values.into_iter().sum::<f32>();
+        }
+
+        let mut avg = HashMap::new();
+        for (category, total) in totals.iter() {
+            avg.insert(category.clone(), total / *day as f32);
+        }
+
+        avg_by_day.insert(*day, avg);
+    }
+
+    let today = {
+        let today = Utc::now();
+
+        if (year, month) == (today.year(), today.month()) {
+            Some(today.day())
+        } else {
+            None
+        }
+    };
+
+    let mut levels = HashMap::<u32, f32>::new();
+    for (category, color) in colored_ordered_categories {
+        let style = ShapeStyle {
+            color: color.into(),
+            filled: true,
+            stroke_width: 0,
+        };
+
+        let mut series = vec![];
+        for day in stats.keys() {
+            if let Some(today) = today.as_ref() {
+                if day > today {
+                    break;
+                }
+            }
+
+            if let Some(avg) = avg_by_day.get_mut(day) {
+                if let Some(value) = avg.remove(&category) {
+                    let level = levels.get(day).copied().unwrap_or_default();
+
+                    series.push(Rectangle::new(
+                        [(day - 1, level), (*day, level + value)],
+                        style,
+                    ));
+
+                    *levels.entry(*day).or_default() += value;
+                }
+            }
+        }
+
+        if !series.is_empty() {
+            chart
+                .draw_series(series)?
+                .legend(move |(x, y)| Circle::new((x, y), 3, style))
+                .label(category);
+        }
+    }
+
+    chart
+        .configure_series_labels()
+        .position(SeriesLabelPosition::UpperRight)
+        .margin(20)
+        .legend_area_size(5)
+        .border_style(BLUE)
+        .background_style(BLUE.mix(0.1))
+        .label_font(("Calibri", 20))
+        .draw()
+        .unwrap();
+
+    canvas.present()?;
 
     Ok(())
 }

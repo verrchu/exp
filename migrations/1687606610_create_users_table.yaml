@@ -1,0 +1,11 @@
+databaseChangeLog:
+  - changeSet:
+      id: 1
+      author: e_terekhin
+      changes:
+        - sql:
+            sql: |
+              create table users (
+                  id bigint primary key check (id > 0)
+              );
+            rollback: drop table users;

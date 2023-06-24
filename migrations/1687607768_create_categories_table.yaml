@@ -1,0 +1,13 @@
+databaseChangeLog:
+  - changeSet:
+      id: 2
+      author: e_terekhin
+      changes:
+        - sql:
+            sql: |
+              create table categories (
+                  id bigserial primary key,
+                  category text not null check (category <> ''),
+                  user_id bigint not null references users(id)
+              );
+            rollback: drop table categories;

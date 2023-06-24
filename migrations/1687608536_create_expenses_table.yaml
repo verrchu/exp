@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - changeSet:
+      id: 3
+      author: e_terekhin
+      changes:
+        - sql:
+            sql: |
+              create table expenses (
+                  id bigserial primary key,
+                  amount decimal(10, 2) check (amount > 0),
+                  category_id bigint not null
+                    references categories(id) on delete cascade,
+                  user_id bigint not null
+                    references users(id) on delete cascade
+              );
+            rollback: drop table expenses;

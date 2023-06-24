@@ -1,0 +1,7 @@
+databaseChangeLog:
+  - include:
+      file: migrations/1687606610_create_users_table.yaml
+  - include:
+      file: migrations/1687607768_create_categories_table.yaml
+  - include:
+      file: migrations/1687608536_create_expenses_table.yaml

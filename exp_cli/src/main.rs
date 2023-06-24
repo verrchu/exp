@@ -1,7 +1,3 @@
-// NOTE: this crate is written in a very dirty manner and it is supposed to be
-// like that because it was a quick (and successful) experiment
-#![allow(warnings)]
-
 use anyhow::{anyhow, bail, Context};
 use chrono::{Datelike, Month, NaiveDate, Utc};
 use clap::Parser;
@@ -23,12 +19,6 @@ struct Args {
     year: u16,
     #[clap(short, long)]
     output: PathBuf,
-    #[clap(short, default_value = "199")]
-    r: u8,
-    #[clap(short, default_value = "21")]
-    g: u8,
-    #[clap(short, default_value = "133")]
-    b: u8,
     data_file: PathBuf,
 }
 
@@ -49,13 +39,7 @@ fn main() -> anyhow::Result<()> {
     let (stats, ordered_categories) =
         calculate(data, (year, month)).context("failed to calculate")?;
 
-    draw(
-        (year, month),
-        stats,
-        ordered_categories,
-        (args.r, args.g, args.b),
-        &args.output,
-    )?;
+    draw((year, month), stats, ordered_categories, &args.output)?;
 
     Ok(())
 }
@@ -145,10 +129,8 @@ fn draw(
     (year, month): (i32, u32),
     stats: Stats,
     ordered_categories: Vec<String>,
-    (r, g, b): (u8, u8, u8),
     output: impl AsRef<Path>,
 ) -> anyhow::Result<()> {
-    let l = ordered_categories.len();
     let colored_ordered_categories = ordered_categories
         .into_iter()
         .zip(colors::colors())
@@ -345,23 +327,6 @@ fn draw_main_chart(
 }
 
 mod colors {
-    use palette::{Hsv, IntoColor, Srgb};
-
-    fn rgb_to_hsv(r: u8, g: u8, b: u8) -> Hsv {
-        let rgb_color = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
-        let hsv_color: Hsv = rgb_color.into_color();
-        hsv_color
-    }
-
-    fn hsv_to_rgb(hsv_color: &Hsv) -> (u8, u8, u8) {
-        let rgb_color: Srgb = (*hsv_color).into_color();
-        (
-            (rgb_color.red * 255.0) as u8,
-            (rgb_color.green * 255.0) as u8,
-            (rgb_color.blue * 255.0) as u8,
-        )
-    }
-
     use plotters::style::RGBColor;
     pub fn colors() -> Vec<RGBColor> {
         vec![

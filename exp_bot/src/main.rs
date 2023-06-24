@@ -15,6 +15,8 @@ use tokio::time::{interval, MissedTickBehavior};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    setup_tracing().context("failed to setup tracing")?;
+
     let token = var("TOKEN").context("failed to read token from env")?;
     let bot = Bot::new(token);
 
@@ -34,6 +36,8 @@ async fn main() -> anyhow::Result<()> {
             .context("failed to get updates")?;
 
         for update in updates {
+            tracing::debug!("handling update");
+
             match update.kind {
                 UpdateKind::Message(msg) => handle_message(&bot, msg)
                     .await
@@ -89,6 +93,33 @@ async fn render_report_menu(bot: &Bot, chat_id: ChatId, year: i32) -> anyhow::Re
         ]))
         .await
         .context("failed to send message")?;
+
+    Ok(())
+}
+
+fn setup_tracing() -> anyhow::Result<()> {
+    use std::io::{stderr, IsTerminal};
+
+    use time::macros::format_description;
+    use tracing_subscriber::{
+        filter::{EnvFilter, LevelFilter},
+        fmt::time::UtcTime,
+    };
+
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env()
+        .context("failed to create env filter")?;
+
+    tracing_subscriber::fmt()
+        .with_ansi(stderr().is_terminal())
+        .with_writer(stderr)
+        .with_target(false)
+        .with_timer(UtcTime::new(format_description!(
+            "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
+        )))
+        .with_env_filter(env_filter)
+        .init();
 
     Ok(())
 }

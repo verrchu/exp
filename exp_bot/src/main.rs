@@ -1,3 +1,5 @@
+mod conversation_state;
+use conversation_state::{ConversationState, ConversationStates};
 mod models;
 mod storage;
 
@@ -20,6 +22,7 @@ use tokio_postgres::{Client as PgClient, Config as PgConf, NoTls};
 struct ExecCtx {
     bot: Bot,
     db_client: PgClient,
+    cstate: ConversationStates,
 }
 
 #[tokio::main]
@@ -46,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
     let ctx = ExecCtx {
         bot,
         db_client: client,
+        cstate: ConversationStates::default(),
     };
 
     let mut interval = interval(Duration::from_millis(200));
@@ -74,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
                 UpdateKind::Message(ref msg) => handle_message((chat, user), msg, &ctx)
                     .await
                     .context("failed to handle message")?,
-                UpdateKind::CallbackQuery(cb) => handle_callback(cb, &ctx)
+                UpdateKind::CallbackQuery(ref cb) => handle_callback((chat, user), cb, &ctx)
                     .await
                     .context("failed to handle callback")?,
                 _ => unreachable!(),
@@ -102,18 +106,88 @@ async fn handle_message(
                 .await
                 .context("failed to render report menu")?;
         }
-        _ => {
-            ctx.bot
-                .delete_message(chat.id, msg.id)
+        Some("/add_expense") => {
+            render_categories_menu(&ctx.bot, chat.id)
                 .await
-                .context("failed to delete message")?;
+                .context("failed to render categories menu")?;
+        }
+        Some(text) => match ctx.cstate.get(user.id).await {
+            Some(ConversationState::AwaitingCategoryName) => {
+                ctx.bot
+                    .send_message(chat.id, format!("[category confirmation]: {text}"))
+                    .reply_markup(InlineKeyboardMarkup::new([[
+                        InlineKeyboardButton::new(
+                            "confirm",
+                            InlineKeyboardButtonKind::CallbackData(format!("ccn:{}", msg.id.0)),
+                        ),
+                        InlineKeyboardButton::new(
+                            "abort",
+                            InlineKeyboardButtonKind::CallbackData(format!("acn:{}", msg.id.0)),
+                        ),
+                    ]]))
+                    .await
+                    .context("failed to send message")?;
+
+                ctx.cstate
+                    .set(
+                        user.id,
+                        ConversationState::AwaitingCategoryNameConfirmation {
+                            message_id: msg.id,
+                            category_name: text.to_string(),
+                        },
+                    )
+                    .await;
+            }
+            _ => {
+                ctx.bot
+                    .delete_message(chat.id, msg.id)
+                    .await
+                    .context("failed to delete message")?;
+            }
+        },
+        None => {
+            tracing::warn!("empty message received");
         }
     }
 
     Ok(())
 }
 
-async fn handle_callback(_cb: CallbackQuery, cts: &ExecCtx) -> anyhow::Result<()> {
+async fn handle_callback(
+    (chat, user): (&Chat, &User),
+    cb: &CallbackQuery,
+    ctx: &ExecCtx,
+) -> anyhow::Result<()> {
+    match cb.data.as_ref().map(String::as_str) {
+        Some("add_category") => {
+            ctx.bot
+                .send_message(chat.id, "please, provide category name")
+                .await
+                .context("failed to send message")?;
+            ctx.cstate
+                .set(user.id, ConversationState::AwaitingCategoryName)
+                .await;
+        }
+        Some(data) => {
+            if let Some(_) = data.strip_prefix("ccn:") {
+                if let Some(ConversationState::AwaitingCategoryNameConfirmation { .. }) =
+                    ctx.cstate.get(user.id).await
+                {
+                    ctx.bot
+                        .send_message(chat.id, "created")
+                        .await
+                        .context("failed to send message")?;
+
+                    ctx.cstate.clear(user.id).await;
+                }
+
+                return Ok(());
+            }
+
+            tracing::warn!("unhandled callback: {data}");
+        }
+        _ => {}
+    }
     Ok(())
 }
 
@@ -130,6 +204,18 @@ async fn render_report_menu(bot: &Bot, chat_id: ChatId, year: i32) -> anyhow::Re
             make_row(["May", "Jun", "Jul", "Aug"]),
             make_row(["Sep", "Oct", "Nov", "Dec"]),
         ]))
+        .await
+        .context("failed to send message")?;
+
+    Ok(())
+}
+
+async fn render_categories_menu(bot: &Bot, chat_id: ChatId) -> anyhow::Result<()> {
+    bot.send_message(chat_id, "choose category")
+        .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
+            "add category",
+            InlineKeyboardButtonKind::CallbackData("add_category".into()),
+        )]]))
         .await
         .context("failed to send message")?;
 

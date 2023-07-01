@@ -11,17 +11,18 @@ use teloxide_core::{
     },
 };
 
-use crate::{models, storage, ConversationState, ExecCtx};
+use crate::{storage, ConversationState, ExecCtx, MsgCtx};
 
-pub(crate) async fn report(ctx: &ExecCtx, chat_id: ChatId, year: i32) -> anyhow::Result<()> {
+pub(crate) async fn report(exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Result<()> {
     let make_row = |months: [&str; 4]| {
         months.map(|m| {
             InlineKeyboardButton::new(m, InlineKeyboardButtonKind::CallbackData(m.to_string()))
         })
     };
 
-    ctx.bot
-        .send_message(chat_id, format!("{year}"))
+    exec_ctx
+        .bot
+        .send_message(msg_ctx.chat.id, format!("2023"))
         .reply_markup(InlineKeyboardMarkup::new([
             make_row(["Jan", "Feb", "Mar", "Apr"]),
             make_row(["May", "Jun", "Jul", "Aug"]),
@@ -33,9 +34,10 @@ pub(crate) async fn report(ctx: &ExecCtx, chat_id: ChatId, year: i32) -> anyhow:
     Ok(())
 }
 
-pub(crate) async fn add_expense(ctx: &ExecCtx, chat_id: ChatId) -> anyhow::Result<()> {
-    ctx.bot
-        .send_message(chat_id, "choose category")
+pub(crate) async fn add_expense(exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Result<()> {
+    exec_ctx
+        .bot
+        .send_message(msg_ctx.chat.id, "choose category")
         .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
             "add category",
             InlineKeyboardButtonKind::CallbackData("add_category".into()),
@@ -46,34 +48,32 @@ pub(crate) async fn add_expense(ctx: &ExecCtx, chat_id: ChatId) -> anyhow::Resul
     Ok(())
 }
 
-pub(crate) async fn category_name(
-    ctx: &ExecCtx,
-    (user_id, chat_id): (UserId, ChatId),
-    msg: &Message,
-) -> anyhow::Result<()> {
+pub(crate) async fn category_name(exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Result<()> {
     // unwrap: if we got this far then the message definetely contains text
-    let cname = msg.text().unwrap();
+    let cname = msg_ctx.msg.text().unwrap();
 
-    ctx.bot
-        .send_message(chat_id, format!("[category confirmation]: {cname}"))
+    exec_ctx
+        .bot
+        .send_message(msg_ctx.chat.id, format!("[category confirmation]: {cname}"))
         .reply_markup(InlineKeyboardMarkup::new([[
             InlineKeyboardButton::new(
                 "confirm",
-                InlineKeyboardButtonKind::CallbackData(format!("ccn:{}", msg.id.0)),
+                InlineKeyboardButtonKind::CallbackData(format!("ccn:{}", msg_ctx.msg.id.0)),
             ),
             InlineKeyboardButton::new(
                 "reject",
-                InlineKeyboardButtonKind::CallbackData(format!("rcn:{}", msg.id.0)),
+                InlineKeyboardButtonKind::CallbackData(format!("rcn:{}", msg_ctx.msg.id.0)),
             ),
         ]]))
         .await
         .context("failed to send message")?;
 
-    ctx.cstate
+    exec_ctx
+        .cstate
         .set(
-            user_id,
+            msg_ctx.user.id,
             ConversationState::AwaitingCategoryNameConfirmation {
-                msg_id: msg.id,
+                msg_id: msg_ctx.msg.id,
                 category_name: cname.to_string(),
             },
         )
@@ -83,19 +83,22 @@ pub(crate) async fn category_name(
 }
 
 pub(crate) async fn expense_amount(
-    ctx: &ExecCtx,
-    (user_id, chat_id): (UserId, ChatId),
-    msg: &Message,
+    exec_ctx: &ExecCtx,
+    msg_ctx: &MsgCtx,
     cname: &str,
     date: NaiveDate,
 ) -> anyhow::Result<()> {
     // unwrap: if we got this far then the message definetely contains text
-    let amount = msg.text().unwrap();
+    let amount = msg_ctx.msg.text().unwrap();
     let pattern = Regex::new(r"^(0|[^0](\d+)?)([.,]\d{1,2})?$").unwrap();
 
     if !pattern.is_match(amount) {
-        ctx.bot
-            .send_message(chat_id, format!("invalid expense amount. try again"))
+        exec_ctx
+            .bot
+            .send_message(
+                msg_ctx.chat.id,
+                format!("invalid expense amount. try again"),
+            )
             .await
             .context("failed to send message")?;
 
@@ -104,22 +107,17 @@ pub(crate) async fn expense_amount(
 
     let amount = Decimal::from_str_exact(amount).context("failed to parse expense amount")?;
 
-    storage::user::add_expense(
-        models::User { id: user_id.0 },
-        cname,
-        amount,
-        date,
-        &ctx.db_client,
-    )
-    .await
-    .context("failed to add expense")?;
+    storage::user::add_expense(&msg_ctx.user, cname, amount, date, &exec_ctx.db_client)
+        .await
+        .context("failed to add expense")?;
 
-    ctx.bot
-        .send_message(chat_id, "expense added")
+    exec_ctx
+        .bot
+        .send_message(msg_ctx.chat.id, "expense added")
         .await
         .context("failed to send message")?;
 
-    ctx.cstate.clear(user_id).await;
+    exec_ctx.cstate.clear(msg_ctx.user.id).await;
 
     Ok(())
 }

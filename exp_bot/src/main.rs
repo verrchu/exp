@@ -3,7 +3,6 @@ use conversation_state::{ConversationState, ConversationStates};
 mod command;
 use command::Command;
 mod handlers;
-mod models;
 mod storage;
 
 use std::{env::var, time::Duration};
@@ -23,6 +22,12 @@ struct ExecCtx {
     bot: Bot,
     db_client: PgClient,
     cstate: ConversationStates,
+}
+
+struct MsgCtx {
+    user: User,
+    chat: Chat,
+    msg: Message,
 }
 
 #[tokio::main]
@@ -46,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
         conn.await.expect("connection closed");
     });
 
-    let ctx = ExecCtx {
+    let exec_ctx = ExecCtx {
         bot,
         db_client: client,
         cstate: ConversationStates::default(),
@@ -59,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
     loop {
         interval.tick().await;
 
-        let updates = ctx
+        let updates = exec_ctx
             .bot
             .get_updates()
             .offset(offset)
@@ -71,16 +76,29 @@ async fn main() -> anyhow::Result<()> {
         for update in updates {
             tracing::debug!("handling update");
 
-            let Some(chat) = update.chat() else { continue; };
-            let Some(user) = update.user() else { continue; };
+            let Some(chat) = update.chat().cloned() else { continue; };
+            let Some(user) = update.user().cloned() else { continue; };
 
             match update.kind {
-                UpdateKind::Message(ref msg) => handle_message((chat, user), msg, &ctx)
-                    .await
-                    .context("failed to handle message")?,
-                UpdateKind::CallbackQuery(ref cb) => handle_callback((chat, user), cb, &ctx)
-                    .await
-                    .context("failed to handle callback")?,
+                UpdateKind::Message(msg) => {
+                    let msg_ctx = MsgCtx { user, chat, msg };
+                    handle_message(&exec_ctx, &msg_ctx)
+                        .await
+                        .context("failed to handle message")?
+                }
+                UpdateKind::CallbackQuery(cb) => {
+                    let Some(msg) = cb.message else { continue; };
+                    let msg_ctx = MsgCtx { user, chat, msg };
+
+                    let Some(cmd) = cb.data else { continue; };
+                    let cmd = cmd
+                        .parse::<Command>()
+                        .context("failed to parse callback data")?;
+
+                    handle_callback(cmd, &exec_ctx, &msg_ctx)
+                        .await
+                        .context("failed to handle callback")?
+                }
                 _ => unreachable!(),
             }
 
@@ -91,42 +109,32 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn handle_message(
-    (chat, user): (&Chat, &User),
-    msg: &Message,
-    ctx: &ExecCtx,
-) -> anyhow::Result<()> {
-    storage::user::ensure_exists(models::User { id: user.id.0 }, &ctx.db_client)
+async fn handle_message(exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Result<()> {
+    storage::user::ensure_exists(&msg_ctx.user, &exec_ctx.db_client)
         .await
         .context("failed to ensure that user exists")?;
 
-    match msg.text() {
+    match msg_ctx.msg.text() {
         Some("/report") => {
-            handlers::message::report(&ctx, chat.id, Utc::now().year()).await?;
+            handlers::message::report(exec_ctx, msg_ctx).await?;
         }
         Some("/add_expense") => {
-            handlers::message::add_expense(&ctx, chat.id).await?;
+            handlers::message::add_expense(exec_ctx, msg_ctx).await?;
         }
-        Some(_text) => match ctx.cstate.get(user.id).await {
+        Some(_text) => match exec_ctx.cstate.get(msg_ctx.user.id).await {
             Some(ConversationState::AwaitingCategoryName) => {
-                handlers::message::category_name(&ctx, (user.id, chat.id), &msg).await?;
+                handlers::message::category_name(exec_ctx, msg_ctx).await?;
             }
             Some(ConversationState::AwaitingExpenseAmount {
                 category_name,
                 date,
             }) => {
-                handlers::message::expense_amount(
-                    &ctx,
-                    (user.id, chat.id),
-                    &msg,
-                    &category_name,
-                    date,
-                )
-                .await?;
+                handlers::message::expense_amount(exec_ctx, msg_ctx, &category_name, date).await?;
             }
             _ => {
-                ctx.bot
-                    .delete_message(chat.id, msg.id)
+                exec_ctx
+                    .bot
+                    .delete_message(msg_ctx.chat.id, msg_ctx.msg.id)
                     .await
                     .context("failed to delete message")?;
             }
@@ -139,37 +147,26 @@ async fn handle_message(
     Ok(())
 }
 
-async fn handle_callback(
-    (chat, user): (&Chat, &User),
-    cb: &CallbackQuery,
-    ctx: &ExecCtx,
-) -> anyhow::Result<()> {
-    let Some(cmd) = cb.data.as_ref() else { return Ok(()); };
-    let Some(msg) = cb.message.as_ref() else { return Ok(()); };
-    let cmd = cmd.parse::<Command>().context("failed to parse command")?;
-
+async fn handle_callback(cmd: Command, exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Result<()> {
     match cmd {
         Command::AddCategory => {
-            handlers::callback::add_category(ctx, (user.id, chat.id)).await?;
+            handlers::callback::add_category(exec_ctx, msg_ctx).await?;
         }
         Command::ConfirmCategoryName {
             msg_id: source_msg_id,
         } => {
-            handlers::callback::confirm_category_name(ctx, (user.id, chat.id), source_msg_id, msg)
-                .await?;
+            handlers::callback::confirm_category_name(source_msg_id, exec_ctx, msg_ctx).await?;
         }
         Command::RejectCategoryName {
             msg_id: source_msg_id,
         } => {
-            handlers::callback::reject_category_name(ctx, (user.id, chat.id), source_msg_id)
-                .await?;
+            handlers::callback::reject_category_name(source_msg_id, exec_ctx, msg_ctx).await?;
         }
         Command::PickExpenseDate {
             msg_id: source_msg_id,
             date,
         } => {
-            handlers::callback::pick_expense_date(ctx, (user.id, chat.id), date, source_msg_id)
-                .await?;
+            handlers::callback::pick_expense_date(source_msg_id, date, exec_ctx, msg_ctx).await?;
         }
     }
     Ok(())

@@ -9,36 +9,36 @@ use teloxide_core::{
     },
 };
 
-use crate::{models, storage, ConversationState, ExecCtx};
+use crate::{storage, ConversationState, ExecCtx, MsgCtx};
 
-pub(crate) async fn add_category(
-    ctx: &ExecCtx,
-    (user_id, chat_id): (UserId, ChatId),
-) -> anyhow::Result<()> {
-    ctx.bot
-        .send_message(chat_id, "please, provide category name")
+pub(crate) async fn add_category(exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Result<()> {
+    exec_ctx
+        .bot
+        .send_message(msg_ctx.chat.id, "please, provide category name")
         .await
         .context("failed to send message")?;
-    ctx.cstate
-        .set(user_id, ConversationState::AwaitingCategoryName)
+    exec_ctx
+        .cstate
+        .set(msg_ctx.user.id, ConversationState::AwaitingCategoryName)
         .await;
 
     Ok(())
 }
 
 pub(crate) async fn reject_category_name(
-    ctx: &ExecCtx,
-    (user_id, chat_id): (UserId, ChatId),
     source_msg_id: MessageId,
+    exec_ctx: &ExecCtx,
+    msg_ctx: &MsgCtx,
 ) -> anyhow::Result<()> {
     if let Some(ConversationState::AwaitingCategoryNameConfirmation {
         msg_id: expected_msg_id,
         ..
-    }) = ctx.cstate.get(user_id).await
+    }) = exec_ctx.cstate.get(msg_ctx.user.id).await
     {
         if source_msg_id == expected_msg_id {
-            ctx.bot
-                .send_message(chat_id, "choose category")
+            exec_ctx
+                .bot
+                .send_message(msg_ctx.chat.id, "choose category")
                 .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
                     "add category",
                     InlineKeyboardButtonKind::CallbackData("add_category".into()),
@@ -46,7 +46,7 @@ pub(crate) async fn reject_category_name(
                 .await
                 .context("failed to send message")?;
 
-            ctx.cstate.clear(user_id).await;
+            exec_ctx.cstate.clear(msg_ctx.user.id).await;
         }
     }
 
@@ -54,21 +54,19 @@ pub(crate) async fn reject_category_name(
 }
 
 pub(crate) async fn confirm_category_name(
-    ctx: &ExecCtx,
-    (user_id, chat_id): (UserId, ChatId),
     source_msg_id: MessageId,
-    msg: &Message,
+    exec_ctx: &ExecCtx,
+    msg_ctx: &MsgCtx,
 ) -> anyhow::Result<()> {
     if let Some(ConversationState::AwaitingCategoryNameConfirmation {
         msg_id: expected_msg_id,
         category_name: cname,
-    }) = ctx.cstate.get(user_id).await
+    }) = exec_ctx.cstate.get(msg_ctx.user.id).await
     {
         if source_msg_id == expected_msg_id {
-            let inserted =
-                storage::user::add_category(models::User { id: user_id.0 }, &cname, &ctx.db_client)
-                    .await
-                    .context("failed to add category")?;
+            let inserted = storage::user::add_category(&msg_ctx.user, &cname, &exec_ctx.db_client)
+                .await
+                .context("failed to add category")?;
 
             let mut resp = inserted
                 .then(|| format!("category '{cname}' added"))
@@ -79,12 +77,16 @@ pub(crate) async fn confirm_category_name(
             let mk_button = |name: &str, data: &str| {
                 InlineKeyboardButton::new(
                     name,
-                    InlineKeyboardButtonKind::CallbackData(format!("ped:{}:{data}", msg.id)),
+                    InlineKeyboardButtonKind::CallbackData(format!(
+                        "ped:{}:{data}",
+                        msg_ctx.msg.id
+                    )),
                 )
             };
 
-            ctx.bot
-                .send_message(chat_id, resp)
+            exec_ctx
+                .bot
+                .send_message(msg_ctx.chat.id, resp)
                 .reply_markup(InlineKeyboardMarkup::new([
                     [mk_button("today", "today")],
                     [mk_button("yesterday", "yesterday")],
@@ -93,11 +95,12 @@ pub(crate) async fn confirm_category_name(
                 .await
                 .context("failed to send message")?;
 
-            ctx.cstate
+            exec_ctx
+                .cstate
                 .set(
-                    user_id,
+                    msg_ctx.user.id,
                     ConversationState::AwaitingExpenseDate {
-                        msg_id: msg.id,
+                        msg_id: msg_ctx.msg.id,
                         category_name: cname.to_string(),
                     },
                 )
@@ -109,25 +112,27 @@ pub(crate) async fn confirm_category_name(
 }
 
 pub(crate) async fn pick_expense_date(
-    ctx: &ExecCtx,
-    (user_id, chat_id): (UserId, ChatId),
-    date: NaiveDate,
     source_msg_id: MessageId,
+    date: NaiveDate,
+    exec_ctx: &ExecCtx,
+    msg_ctx: &MsgCtx,
 ) -> anyhow::Result<()> {
     if let Some(ConversationState::AwaitingExpenseDate {
         msg_id: expected_msg_id,
         category_name: cname,
-    }) = ctx.cstate.get(user_id).await
+    }) = exec_ctx.cstate.get(msg_ctx.user.id).await
     {
         if source_msg_id == expected_msg_id {
-            ctx.bot
-                .send_message(chat_id, "please, provide expense amount")
+            exec_ctx
+                .bot
+                .send_message(msg_ctx.chat.id, "please, provide expense amount")
                 .await
                 .context("failed to send message")?;
 
-            ctx.cstate
+            exec_ctx
+                .cstate
                 .set(
-                    user_id,
+                    msg_ctx.user.id,
                     ConversationState::AwaitingExpenseAmount {
                         date,
                         category_name: cname.to_string(),

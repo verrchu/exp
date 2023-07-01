@@ -1,16 +1,17 @@
-use crate::{models::User, PgClient};
+use crate::PgClient;
 
 use anyhow::Context;
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
+use teloxide_core::types::User;
 
-pub async fn ensure_exists(user: User, db_client: &PgClient) -> anyhow::Result<()> {
+pub async fn ensure_exists(user: &User, db_client: &PgClient) -> anyhow::Result<()> {
     let stmt = db_client
         .prepare("insert into users(id) values($1) on conflict do nothing")
         .await
         .context("failed to prepare query")?;
 
-    let user_id = i64::try_from(user.id).context("failed to cast user id to i64")?;
+    let user_id = i64::try_from(user.id.0).context("failed to cast user id to i64")?;
     db_client
         .execute(&stmt, &[&user_id])
         .await
@@ -19,13 +20,13 @@ pub async fn ensure_exists(user: User, db_client: &PgClient) -> anyhow::Result<(
     Ok(())
 }
 
-pub async fn add_category(user: User, cname: &str, db_client: &PgClient) -> anyhow::Result<bool> {
+pub async fn add_category(user: &User, cname: &str, db_client: &PgClient) -> anyhow::Result<bool> {
     let stmt = db_client
         .prepare("insert into categories(user_id, category) values($1, $2) on conflict do nothing")
         .await
         .context("failed to prepare query")?;
 
-    let user_id = i64::try_from(user.id).context("failed to cast user id to i64")?;
+    let user_id = i64::try_from(user.id.0).context("failed to cast user id to i64")?;
     let nmod = db_client
         .execute(&stmt, &[&user_id, &cname])
         .await
@@ -35,7 +36,7 @@ pub async fn add_category(user: User, cname: &str, db_client: &PgClient) -> anyh
 }
 
 pub async fn add_expense(
-    user: User,
+    user: &User,
     cname: &str,
     amount: Decimal,
     date: NaiveDate,
@@ -49,7 +50,7 @@ pub async fn add_expense(
         .await
         .context("failed to prepare query")?;
 
-    let user_id = i64::try_from(user.id).context("failed to cast user id to i64")?;
+    let user_id = i64::try_from(user.id.0).context("failed to cast user id to i64")?;
     let nmod = db_client
         .execute(&stmt, &[&user_id, &cname, &amount, &date])
         .await

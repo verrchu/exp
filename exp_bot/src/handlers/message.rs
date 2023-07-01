@@ -6,8 +6,7 @@ use teloxide_core::{
     payloads::SendMessageSetters,
     requests::Requester,
     types::{
-        ChatId, InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup, Message,
-        UserId,
+        InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup,
     },
 };
 
@@ -22,7 +21,7 @@ pub(crate) async fn report(exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Resu
 
     exec_ctx
         .bot
-        .send_message(msg_ctx.chat.id, format!("2023"))
+        .send_message(msg_ctx.chat.id, "2023".to_string())
         .reply_markup(InlineKeyboardMarkup::new([
             make_row(["Jan", "Feb", "Mar", "Apr"]),
             make_row(["May", "Jun", "Jul", "Aug"]),
@@ -97,7 +96,7 @@ pub(crate) async fn expense_amount(
             .bot
             .send_message(
                 msg_ctx.chat.id,
-                format!("invalid expense amount. try again"),
+                "invalid expense amount. try again".to_string(),
             )
             .await
             .context("failed to send message")?;

@@ -40,7 +40,7 @@ impl FromStr for Command {
         }
 
         if let Some(data) = cmd.strip_prefix("ped:") {
-            let mut chunks = data.split(":");
+            let mut chunks = data.split(':');
 
             let msg_id = chunks.next().unwrap();
             let msg_id = msg_id.parse::<i32>().context(format!(

@@ -8,11 +8,11 @@ mod storage;
 use std::{env::var, time::Duration};
 
 use anyhow::Context;
-use chrono::{Datelike, Utc};
+
 use teloxide_core::{
     payloads::GetUpdatesSetters,
     requests::Requester,
-    types::{AllowedUpdate, CallbackQuery, Chat, Message, UpdateKind, User},
+    types::{AllowedUpdate, Chat, Message, UpdateKind, User},
     Bot,
 };
 use tokio::time::{interval, MissedTickBehavior};

@@ -4,8 +4,8 @@ use teloxide_core::{
     payloads::SendMessageSetters,
     requests::Requester,
     types::{
-        ChatId, InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup, Message,
-        MessageId, UserId,
+        InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup,
+        MessageId,
     },
 };
 

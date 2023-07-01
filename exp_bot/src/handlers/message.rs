@@ -5,12 +5,10 @@ use rust_decimal::Decimal;
 use teloxide_core::{
     payloads::SendMessageSetters,
     requests::Requester,
-    types::{
-        InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup,
-    },
+    types::{InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup},
 };
 
-use crate::{storage, ConversationState, ExecCtx, MsgCtx};
+use crate::{ConversationState, ExecCtx, MsgCtx};
 
 pub(crate) async fn report(exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Result<()> {
     let make_row = |months: [&str; 4]| {
@@ -106,7 +104,9 @@ pub(crate) async fn expense_amount(
 
     let amount = Decimal::from_str_exact(amount).context("failed to parse expense amount")?;
 
-    storage::user::add_expense(&msg_ctx.user, cname, amount, date, &exec_ctx.db_client)
+    exec_ctx
+        .storage
+        .add_expense(&msg_ctx.user, cname, amount, date)
         .await
         .context("failed to add expense")?;
 

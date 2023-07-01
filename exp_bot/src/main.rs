@@ -4,6 +4,7 @@ mod command;
 use command::Command;
 mod handlers;
 mod storage;
+use storage::Storage;
 
 use std::{env::var, time::Duration};
 
@@ -20,7 +21,7 @@ use tokio_postgres::{Client as PgClient, Config as PgConf, NoTls};
 
 struct ExecCtx {
     bot: Bot,
-    db_client: PgClient,
+    storage: Storage,
     cstate: ConversationStates,
 }
 
@@ -53,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
 
     let exec_ctx = ExecCtx {
         bot,
-        db_client: client,
+        storage: Storage::new(client),
         cstate: ConversationStates::default(),
     };
 
@@ -110,7 +111,9 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn handle_message(exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Result<()> {
-    storage::user::ensure_exists(&msg_ctx.user, &exec_ctx.db_client)
+    exec_ctx
+        .storage
+        .ensure_exists(&msg_ctx.user)
         .await
         .context("failed to ensure that user exists")?;
 

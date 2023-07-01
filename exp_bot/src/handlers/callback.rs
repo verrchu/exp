@@ -3,13 +3,10 @@ use chrono::NaiveDate;
 use teloxide_core::{
     payloads::SendMessageSetters,
     requests::Requester,
-    types::{
-        InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup,
-        MessageId,
-    },
+    types::{InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup, MessageId},
 };
 
-use crate::{storage, ConversationState, ExecCtx, MsgCtx};
+use crate::{ConversationState, ExecCtx, MsgCtx};
 
 pub(crate) async fn add_category(exec_ctx: &ExecCtx, msg_ctx: &MsgCtx) -> anyhow::Result<()> {
     exec_ctx
@@ -64,7 +61,9 @@ pub(crate) async fn confirm_category_name(
     }) = exec_ctx.cstate.get(msg_ctx.user.id).await
     {
         if source_msg_id == expected_msg_id {
-            let inserted = storage::user::add_category(&msg_ctx.user, &cname, &exec_ctx.db_client)
+            let inserted = exec_ctx
+                .storage
+                .add_category(&msg_ctx.user, &cname)
                 .await
                 .context("failed to add category")?;
 

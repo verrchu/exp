@@ -13,3 +13,5 @@ tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "fmt", "time"] }
 tokio-postgres = "0.7.8"
 dotenv = "0.15.0"
+regex = "1.8.4"
+rust_decimal = { version = "1.30.0", features = ["db-tokio-postgres"] }

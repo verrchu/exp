@@ -5,3 +5,5 @@ databaseChangeLog:
       file: migrations/1687607768_create_categories_table.yaml
   - include:
       file: migrations/1687608536_create_expenses_table.yaml
+  - include:
+      file: migrations/1688199219_categories_unique_constraint.yaml

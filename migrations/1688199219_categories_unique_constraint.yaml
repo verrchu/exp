@@ -1,0 +1,14 @@
+databaseChangeLog:
+  - changeSet:
+      id: 4
+      author: e_terekhin
+      changes:
+        - sql:
+            sql: |
+                alter table categories
+                add constraint unique_user_category
+                unique(category, user_id);
+            rollback: |
+                alter table categories
+                drop constraint unique_user_category;
+

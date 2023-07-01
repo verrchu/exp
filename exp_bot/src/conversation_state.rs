@@ -7,7 +7,10 @@ use tokio::sync::RwLock;
 pub enum ConversationState {
     AwaitingCategoryName,
     AwaitingCategoryNameConfirmation {
-        message_id: MessageId,
+        msg_id: MessageId,
+        category_name: String,
+    },
+    AwaitingExpenseAmount {
         category_name: String,
     },
 }

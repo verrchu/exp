@@ -1,5 +1,8 @@
 mod conversation_state;
 use conversation_state::{ConversationState, ConversationStates};
+mod command;
+use command::Command;
+mod handlers;
 mod models;
 mod storage;
 
@@ -8,12 +11,9 @@ use std::{env::var, time::Duration};
 use anyhow::Context;
 use chrono::{Datelike, Utc};
 use teloxide_core::{
-    payloads::{GetUpdatesSetters, SendMessageSetters},
+    payloads::GetUpdatesSetters,
     requests::Requester,
-    types::{
-        AllowedUpdate, CallbackQuery, Chat, ChatId, InlineKeyboardButton, InlineKeyboardButtonKind,
-        InlineKeyboardMarkup, Message, UpdateKind, User,
-    },
+    types::{AllowedUpdate, CallbackQuery, Chat, Message, UpdateKind, User},
     Bot,
 };
 use tokio::time::{interval, MissedTickBehavior};
@@ -102,41 +102,18 @@ async fn handle_message(
 
     match msg.text() {
         Some("/report") => {
-            render_report_menu(&ctx.bot, chat.id, Utc::now().year())
-                .await
-                .context("failed to render report menu")?;
+            handlers::message::report(&ctx, chat.id, Utc::now().year()).await?;
         }
         Some("/add_expense") => {
-            render_categories_menu(&ctx.bot, chat.id)
-                .await
-                .context("failed to render categories menu")?;
+            handlers::message::add_expense(&ctx, chat.id).await?;
         }
-        Some(text) => match ctx.cstate.get(user.id).await {
+        Some(_text) => match ctx.cstate.get(user.id).await {
             Some(ConversationState::AwaitingCategoryName) => {
-                ctx.bot
-                    .send_message(chat.id, format!("[category confirmation]: {text}"))
-                    .reply_markup(InlineKeyboardMarkup::new([[
-                        InlineKeyboardButton::new(
-                            "confirm",
-                            InlineKeyboardButtonKind::CallbackData(format!("ccn:{}", msg.id.0)),
-                        ),
-                        InlineKeyboardButton::new(
-                            "abort",
-                            InlineKeyboardButtonKind::CallbackData(format!("acn:{}", msg.id.0)),
-                        ),
-                    ]]))
-                    .await
-                    .context("failed to send message")?;
-
-                ctx.cstate
-                    .set(
-                        user.id,
-                        ConversationState::AwaitingCategoryNameConfirmation {
-                            message_id: msg.id,
-                            category_name: text.to_string(),
-                        },
-                    )
-                    .await;
+                handlers::message::category_name(&ctx, (user.id, chat.id), &msg).await?;
+            }
+            Some(ConversationState::AwaitingExpenseAmount { category_name }) => {
+                handlers::message::expense_amount(&ctx, (user.id, chat.id), &msg, &category_name)
+                    .await?;
             }
             _ => {
                 ctx.bot
@@ -158,8 +135,11 @@ async fn handle_callback(
     cb: &CallbackQuery,
     ctx: &ExecCtx,
 ) -> anyhow::Result<()> {
-    match cb.data.as_ref().map(String::as_str) {
-        Some("add_category") => {
+    let Some(cmd) = cb.data.as_ref() else { return Ok(()); };
+    let cmd = cmd.parse::<Command>().context("failed to parse command")?;
+
+    match cmd {
+        Command::AddCategory => {
             ctx.bot
                 .send_message(chat.id, "please, provide category name")
                 .await
@@ -168,57 +148,44 @@ async fn handle_callback(
                 .set(user.id, ConversationState::AwaitingCategoryName)
                 .await;
         }
-        Some(data) => {
-            if let Some(_) = data.strip_prefix("ccn:") {
-                if let Some(ConversationState::AwaitingCategoryNameConfirmation { .. }) =
-                    ctx.cstate.get(user.id).await
-                {
+        Command::ConfirmCategoryName { msg_id } => {
+            if let Some(ConversationState::AwaitingCategoryNameConfirmation {
+                msg_id: expected_msg_id,
+                category_name: cname,
+            }) = ctx.cstate.get(user.id).await
+            {
+                if msg_id == expected_msg_id {
+                    let inserted = storage::user::add_category(
+                        models::User { id: user.id.0 },
+                        &cname,
+                        &ctx.db_client,
+                    )
+                    .await
+                    .context("failed to add category")?;
+
+                    let mut resp = inserted
+                        .then(|| format!("category '{cname}' added"))
+                        .unwrap_or_else(|| format!("category '{cname}' has already been added"));
+
+                    resp.push_str("\n\nplease, provide expense amount");
+
                     ctx.bot
-                        .send_message(chat.id, "created")
+                        .send_message(chat.id, resp)
                         .await
                         .context("failed to send message")?;
 
-                    ctx.cstate.clear(user.id).await;
+                    ctx.cstate
+                        .set(
+                            user.id,
+                            ConversationState::AwaitingExpenseAmount {
+                                category_name: cname.to_string(),
+                            },
+                        )
+                        .await;
                 }
-
-                return Ok(());
             }
-
-            tracing::warn!("unhandled callback: {data}");
         }
-        _ => {}
     }
-    Ok(())
-}
-
-async fn render_report_menu(bot: &Bot, chat_id: ChatId, year: i32) -> anyhow::Result<()> {
-    let make_row = |months: [&str; 4]| {
-        months.map(|m| {
-            InlineKeyboardButton::new(m, InlineKeyboardButtonKind::CallbackData(m.to_string()))
-        })
-    };
-
-    bot.send_message(chat_id, format!("{year}"))
-        .reply_markup(InlineKeyboardMarkup::new([
-            make_row(["Jan", "Feb", "Mar", "Apr"]),
-            make_row(["May", "Jun", "Jul", "Aug"]),
-            make_row(["Sep", "Oct", "Nov", "Dec"]),
-        ]))
-        .await
-        .context("failed to send message")?;
-
-    Ok(())
-}
-
-async fn render_categories_menu(bot: &Bot, chat_id: ChatId) -> anyhow::Result<()> {
-    bot.send_message(chat_id, "choose category")
-        .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
-            "add category",
-            InlineKeyboardButtonKind::CallbackData("add_category".into()),
-        )]]))
-        .await
-        .context("failed to send message")?;
-
     Ok(())
 }
 

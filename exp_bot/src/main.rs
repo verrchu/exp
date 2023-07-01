@@ -111,9 +111,18 @@ async fn handle_message(
             Some(ConversationState::AwaitingCategoryName) => {
                 handlers::message::category_name(&ctx, (user.id, chat.id), &msg).await?;
             }
-            Some(ConversationState::AwaitingExpenseAmount { category_name }) => {
-                handlers::message::expense_amount(&ctx, (user.id, chat.id), &msg, &category_name)
-                    .await?;
+            Some(ConversationState::AwaitingExpenseAmount {
+                category_name,
+                date,
+            }) => {
+                handlers::message::expense_amount(
+                    &ctx,
+                    (user.id, chat.id),
+                    &msg,
+                    &category_name,
+                    date,
+                )
+                .await?;
             }
             _ => {
                 ctx.bot
@@ -136,54 +145,31 @@ async fn handle_callback(
     ctx: &ExecCtx,
 ) -> anyhow::Result<()> {
     let Some(cmd) = cb.data.as_ref() else { return Ok(()); };
+    let Some(msg) = cb.message.as_ref() else { return Ok(()); };
     let cmd = cmd.parse::<Command>().context("failed to parse command")?;
 
     match cmd {
         Command::AddCategory => {
-            ctx.bot
-                .send_message(chat.id, "please, provide category name")
-                .await
-                .context("failed to send message")?;
-            ctx.cstate
-                .set(user.id, ConversationState::AwaitingCategoryName)
-                .await;
+            handlers::callback::add_category(ctx, (user.id, chat.id)).await?;
         }
-        Command::ConfirmCategoryName { msg_id } => {
-            if let Some(ConversationState::AwaitingCategoryNameConfirmation {
-                msg_id: expected_msg_id,
-                category_name: cname,
-            }) = ctx.cstate.get(user.id).await
-            {
-                if msg_id == expected_msg_id {
-                    let inserted = storage::user::add_category(
-                        models::User { id: user.id.0 },
-                        &cname,
-                        &ctx.db_client,
-                    )
-                    .await
-                    .context("failed to add category")?;
-
-                    let mut resp = inserted
-                        .then(|| format!("category '{cname}' added"))
-                        .unwrap_or_else(|| format!("category '{cname}' has already been added"));
-
-                    resp.push_str("\n\nplease, provide expense amount");
-
-                    ctx.bot
-                        .send_message(chat.id, resp)
-                        .await
-                        .context("failed to send message")?;
-
-                    ctx.cstate
-                        .set(
-                            user.id,
-                            ConversationState::AwaitingExpenseAmount {
-                                category_name: cname.to_string(),
-                            },
-                        )
-                        .await;
-                }
-            }
+        Command::ConfirmCategoryName {
+            msg_id: source_msg_id,
+        } => {
+            handlers::callback::confirm_category_name(ctx, (user.id, chat.id), source_msg_id, msg)
+                .await?;
+        }
+        Command::RejectCategoryName {
+            msg_id: source_msg_id,
+        } => {
+            handlers::callback::reject_category_name(ctx, (user.id, chat.id), source_msg_id)
+                .await?;
+        }
+        Command::PickExpenseDate {
+            msg_id: source_msg_id,
+            date,
+        } => {
+            handlers::callback::pick_expense_date(ctx, (user.id, chat.id), date, source_msg_id)
+                .await?;
         }
     }
     Ok(())

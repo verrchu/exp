@@ -1,4 +1,5 @@
 use anyhow::Context;
+use chrono::NaiveDate;
 use regex::Regex;
 use rust_decimal::Decimal;
 use teloxide_core::{
@@ -61,8 +62,8 @@ pub(crate) async fn category_name(
                 InlineKeyboardButtonKind::CallbackData(format!("ccn:{}", msg.id.0)),
             ),
             InlineKeyboardButton::new(
-                "abort",
-                InlineKeyboardButtonKind::CallbackData(format!("acn:{}", msg.id.0)),
+                "reject",
+                InlineKeyboardButtonKind::CallbackData(format!("rcn:{}", msg.id.0)),
             ),
         ]]))
         .await
@@ -86,6 +87,7 @@ pub(crate) async fn expense_amount(
     (user_id, chat_id): (UserId, ChatId),
     msg: &Message,
     cname: &str,
+    date: NaiveDate,
 ) -> anyhow::Result<()> {
     // unwrap: if we got this far then the message definetely contains text
     let amount = msg.text().unwrap();
@@ -96,6 +98,8 @@ pub(crate) async fn expense_amount(
             .send_message(chat_id, format!("invalid expense amount. try again"))
             .await
             .context("failed to send message")?;
+
+        return Ok(());
     }
 
     let amount = Decimal::from_str_exact(amount).context("failed to parse expense amount")?;
@@ -104,6 +108,7 @@ pub(crate) async fn expense_amount(
         models::User { id: user_id.0 },
         cname,
         amount,
+        date,
         &ctx.db_client,
     )
     .await

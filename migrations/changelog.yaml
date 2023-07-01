@@ -7,3 +7,7 @@ databaseChangeLog:
       file: migrations/1687608536_create_expenses_table.yaml
   - include:
       file: migrations/1688199219_categories_unique_constraint.yaml
+  - include:
+      file: migrations/1688203807_add_expense_date.yaml
+  - include:
+      file: migrations/1688203958_make_expense_amount_not_null.yaml

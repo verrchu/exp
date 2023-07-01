@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use chrono::NaiveDate;
 use teloxide_core::types::{MessageId, UserId};
 use tokio::sync::RwLock;
 
@@ -10,8 +11,13 @@ pub enum ConversationState {
         msg_id: MessageId,
         category_name: String,
     },
+    AwaitingExpenseDate {
+        msg_id: MessageId,
+        category_name: String,
+    },
     AwaitingExpenseAmount {
         category_name: String,
+        date: NaiveDate,
     },
 }
 

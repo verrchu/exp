@@ -1,0 +1,12 @@
+databaseChangeLog:
+  - changeSet:
+      id: 5
+      author: e_terekhin
+      changes:
+        - sql:
+            sql: |
+                alter table expenses
+                add column date date not null;
+            rollback: |
+                alter table expenses
+                drop column date;
